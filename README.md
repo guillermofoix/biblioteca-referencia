@@ -197,4 +197,59 @@ docker build -t ghcr.io/guillermofoix/biblioteca-referencia:dev .
 
 Pon `VERSION=dev` en el `.env` y arranca con `docker compose up -d` (**sin** `pull`: esa imagen solo existe en la EC2, no en GHCR). Cuando termines, vuelve a poner una versión publicada.
 
+## Despliegue automático
+
+Al publicar una release, el despliegue en la EC2 también es automático (con una aprobación por medio):
+
+```
+publicar (máquina de GitHub)  ->  aprobación en "produccion"  ->  desplegar (runner de la EC2)
+```
+
+El job `desplegar` de `release.yml` llama al workflow reutilizable `.github/workflows/deploy.yml`, el mismo que se usa para desplegar a mano o volver atrás.
+
+### El runner de la EC2
+
+Un **runner** es el programa que ejecuta los jobs de GitHub Actions. Normalmente GitHub presta una máquina (`ubuntu-latest`); aquí hemos instalado uno **self-hosted** en la EC2, con las etiquetas `self-hosted` y `produccion`. Los jobs con `runs-on: [self-hosted, produccion]` se ejecutan en la EC2, así que pueden usar su Docker directamente.
+
+**No hace falta abrir ningún puerto en la EC2**: el runner es quien se conecta a GitHub (por HTTPS, hacia fuera) y le pregunta si hay trabajo pendiente. GitHub nunca se conecta a la EC2. El grupo de seguridad sigue igual que antes.
+
+El despliegue vive en una carpeta fija, `/home/ubuntu/despliegue-biblioteca`, con su `docker-compose.yml` y un `.env` que escribe el propio workflow a partir de los secrets. El proyecto de Compose se llama siempre `biblioteca` (`-p biblioteca`).
+
+> **Antes del primer despliegue automático**, para el contenedor que arrancaste a mano en [Desplegar en la EC2](#desplegar-en-la-ec2) (`docker compose down` en la carpeta del repositorio clonado). Si sigue en marcha, ocupa el puerto 5000 y el nuevo no podrá arrancar.
+
+### El environment `produccion`
+
+Un **environment** es un "entorno de destino" con sus propias reglas y secrets. Se configura en el repositorio:
+
+1. **Settings** → **Environments** → **New environment**, con el nombre `produccion`.
+2. En **Deployment protection rules**, marca **Required reviewers** y añade quién puede aprobar despliegues (por ejemplo, tú). Guarda.
+3. En **Environment secrets**, añade `DATABASE_URL` (la conexión a RDS) y `SECRET_KEY`. Solo los jobs que declaran `environment: produccion` pueden leerlos.
+
+### Aprobar un despliegue
+
+Cuando termina el job `publicar`, la ejecución se queda en **Waiting** con el aviso *Review required*. Entra en la ejecución (pestaña **Actions**), pulsa **Review deployments**, marca `produccion` y pulsa **Approve and deploy**. Si pulsas **Reject**, la imagen queda publicada en GHCR, pero no se despliega.
+
+El job comprueba que el contenedor llega a `healthy` (gracias al healthcheck y a `--wait`). Al terminar, el resumen de la ejecución muestra la versión desplegada, la anterior y el estado del contenedor.
+
+### Volver atrás a mano (rollback)
+
+**Actions** → **Deploy** (columna izquierda) → **Run workflow** → escribe la versión anterior **sin la v** (por ejemplo, `1.0.0`) → **Run workflow**. También pide aprobación. Solo se puede volver a versiones que tienen release: el workflow descarga el `docker-compose.yml` de la etiqueta `vX.Y.Z`.
+
+### Rollback automático
+
+Si la versión nueva no llega a `healthy` en 120 segundos (o falla la descarga de la imagen), el workflow:
+
+1. Muestra en el log las últimas líneas de la app, para ver por qué ha fallado.
+2. Vuelve a poner en el `.env` la versión que había antes y la arranca de nuevo. La imagen anterior sigue en la EC2, así que no hace falta descargar nada.
+3. Termina **en rojo** con un error que dice a qué versión ha vuelto. Aunque la app funcione, la versión nueva no está desplegada y hay que enterarse.
+
+Si era el primer despliegue (no había versión anterior), solo informa del fallo.
+
+### Aviso de seguridad
+
+Un runner self-hosted ejecuta en **tu** EC2 el código del workflow. En un repositorio público, cualquiera puede abrir un pull request con un workflow modificado, así que:
+
+- Activa **Settings** → **Actions** → **General** → **Require approval for all external contributors**: los workflows de personas de fuera no se ejecutan sin que tú los apruebes.
+- **Nunca** uses `runs-on: self-hosted` en un workflow que se dispare con `pull_request`: el código de un desconocido se ejecutaría en tu servidor, con acceso a Docker y a tus secrets. El CI (`ci.yml`) usa siempre máquinas de GitHub (`ubuntu-latest`).
+
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)
