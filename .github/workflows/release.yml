@@ -1,0 +1,125 @@
+# Publicación (entrega continua): al publicar una Release en GitHub, se construye la imagen,
+# se escanea con Trivy y, si está limpia, se sube al registro de contenedores de GitHub (GHCR).
+name: Release
+
+# Cuándo se ejecuta: solo cuando alguien PUBLICA una release en la pestaña "Releases".
+# No se ejecuta en cada push ni al guardar un borrador: publicar una versión es una decisión
+# consciente, no algo que pase cada vez que se sube código.
+on:
+  release:
+    types: [published]
+
+# Permisos mínimos del token temporal (GITHUB_TOKEN) que usa este workflow:
+# - contents: read   -> para descargar el código del repositorio con actions/checkout.
+# - packages: write  -> para subir (push) la imagen a GHCR, que en GitHub se llama "Packages".
+# Cualquier otro permiso queda desactivado: si alguien colara código malicioso en el workflow,
+# no podría, por ejemplo, modificar el repositorio ni abrir issues.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      # Descarga el código en la versión de la etiqueta de la release.
+      # Misma versión de la acción que en ci.yml.
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      # Calcula el nombre de la imagen y la versión, y los guarda como "salidas" del paso
+      # (escribiéndolos en $GITHUB_OUTPUT). Los pasos siguientes los leen con
+      # ${{ steps.variables.outputs.NOMBRE }}.
+      - name: Calcular nombre de la imagen y versión
+        id: variables
+        # Pasamos los datos de GitHub como variables de entorno en lugar de escribir
+        # ${{ ... }} dentro del script: así, si la etiqueta tuviera caracteres raros,
+        # se trataría como texto y nunca como código bash.
+        env:
+          REPOSITORIO: ${{ github.repository }}
+          ETIQUETA: ${{ github.event.release.tag_name }}
+        run: |
+          # GHCR no acepta mayúsculas en el nombre de la imagen, pero el usuario o el repositorio
+          # de GitHub sí pueden tenerlas (por ejemplo, "Guillermo-Foix/biblioteca").
+          # ${VARIABLE,,} es la forma de bash de pasar una variable a minúsculas.
+          IMAGEN="ghcr.io/${REPOSITORIO,,}"
+
+          # Comprobamos que la etiqueta sigue el formato semver con una "v" delante: vX.Y.Z
+          # (por ejemplo, v1.2.3). La expresión regular significa:
+          #   ^v        empieza por "v"
+          #   [0-9]+    uno o más dígitos (MAYOR), luego un punto, y lo mismo para MENOR y PARCHE
+          #   $         y ahí termina: no se admite nada más detrás.
+          if [[ ! "$ETIQUETA" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::La etiqueta '$ETIQUETA' no tiene el formato vX.Y.Z (por ejemplo, v1.2.3). Borra la release y créala con una etiqueta correcta."
+            exit 1
+          fi
+
+          # Versión sin la "v": ${VARIABLE#v} quita la "v" del principio (v1.2.3 -> 1.2.3).
+          VERSION="${ETIQUETA#v}"
+
+          echo "imagen=$IMAGEN" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Imagen: $IMAGEN | Versión: $VERSION"
+
+      # Construye la imagen con dos etiquetas:
+      # - IMAGEN:VERSION (por ejemplo, :1.2.3): fija, para desplegar una versión concreta.
+      # - IMAGEN:latest: apunta siempre a la última versión publicada.
+      # Las --label son etiquetas OCI, metadatos estándar que viajan dentro de la imagen:
+      # - source: URL del repositorio. GitHub la usa para vincular el paquete de GHCR con este
+      #   repositorio (aparecerá en su página y heredará su descripción).
+      # - version: la versión publicada.
+      # - revision: el commit exacto (github.sha) del que sale la imagen.
+      - name: Construir la imagen Docker
+        run: |
+          docker build \
+            -t ${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }} \
+            -t ${{ steps.variables.outputs.imagen }}:latest \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.version=${{ steps.variables.outputs.version }} \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            .
+
+      # Mismo escaneo que en ci.yml (misma acción fijada por SHA y mismas opciones).
+      # Si Trivy encuentra una vulnerabilidad grave, el job se para aquí y NO se publica nada:
+      # los pasos de login y push no llegan a ejecutarse.
+      - name: Escanear la imagen con Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          trivyignores: .trivyignore
+
+      # Inicia sesión en GHCR con GITHUB_TOKEN: un token temporal que GitHub crea
+      # automáticamente para cada ejecución del workflow y que caduca al terminar.
+      # No hay que crear ningún secreto: ya existe, con los permisos de "permissions:" de arriba.
+      # --password-stdin lee la contraseña de la entrada estándar (lo que llega por el "|")
+      # en lugar de escribirla en la línea de comandos, donde podría quedar en el historial
+      # o verse en la lista de procesos.
+      - name: Iniciar sesión en GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Sube las dos etiquetas. La segunda es casi instantánea: las capas ya se han subido
+      # con la primera, solo cambia el nombre que apunta a ellas.
+      - name: Publicar la imagen en GHCR
+        run: |
+          docker push ${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }}
+          docker push ${{ steps.variables.outputs.imagen }}:latest
+
+      # Escribe un resumen en $GITHUB_STEP_SUMMARY: aparece en la página de la ejecución,
+      # en la pestaña Actions, para saber de un vistazo qué se ha publicado y cómo usarlo.
+      - name: Resumen de la publicación
+        run: |
+          {
+            echo "## Imagen publicada"
+            echo ""
+            echo "\`${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }}\` (también como \`:latest\`)"
+            echo ""
+            echo "Para usarla:"
+            echo ""
+            echo "\`\`\`"
+            echo "docker pull ${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
