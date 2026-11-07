@@ -70,3 +70,50 @@ def test_lista_sin_base_de_datos_devuelve_503(cliente, monkeypatch):
     assert respuesta.status_code == 503
     # Y debe hacerlo rápido: muy por debajo de los 30 s en que gunicorn corta la petición
     assert duracion < 10
+
+
+# ---------- Tests de la ruta /health ----------
+
+def test_health_sin_base_de_datos_devuelve_503(cliente, monkeypatch, caplog):
+    # Mismo truco que en el test de la lista: un puerto cerrado rechaza la conexión al instante
+    monkeypatch.setattr(modulo_app, "DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
+    inicio = time.monotonic()
+    respuesta = cliente.get("/health")
+    duracion = time.monotonic() - inicio
+    assert respuesta.status_code == 503
+    # Debe responder JSON (no la página error.html) y sin detalles de la conexión
+    assert respuesta.get_json() == {"status": "error", "db": "unreachable"}
+    assert duracion < 10
+    # caplog recoge lo que se escribe en el log durante el test: el error real debe quedar registrado
+    assert "Healthcheck fallido" in caplog.text
+
+
+def test_health_sin_database_url_devuelve_503(cliente, monkeypatch, caplog):
+    # Sin DATABASE_URL, conectar() lanza RuntimeError: /health también debe responder JSON
+    monkeypatch.setattr(modulo_app, "DATABASE_URL", None)
+    respuesta = cliente.get("/health")
+    assert respuesta.status_code == 503
+    assert respuesta.get_json() == {"status": "error", "db": "unreachable"}
+    assert "Healthcheck fallido" in caplog.text
+
+
+class ConexionFalsa:
+    """Imita lo mínimo de una conexión de psycopg que usa /health: el bloque with y execute()."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def execute(self, consulta):
+        pass
+
+
+def test_health_con_base_de_datos_devuelve_200(cliente, monkeypatch):
+    # Un "doble de prueba" es un objeto falso que sustituye a uno real durante un test.
+    # Aquí solo queremos probar la lógica de /health, no PostgreSQL, así que basta con fingir que conecta.
+    monkeypatch.setattr(modulo_app, "conectar", lambda: ConexionFalsa())
+    respuesta = cliente.get("/health")
+    assert respuesta.status_code == 200
+    assert respuesta.get_json() == {"status": "ok", "db": "ok"}

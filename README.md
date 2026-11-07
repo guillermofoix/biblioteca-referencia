@@ -16,12 +16,13 @@ Están fijadas en `requirements.txt`:
 - Flask 3.0.3
 - psycopg 3.2.3 (`psycopg[binary]`), para hablar con PostgreSQL
 - python-dotenv 1.0.1, para leer un fichero `.env` si existe (opcional)
+- gunicorn 23.0.0, servidor de producción con el que arranca la app dentro de la imagen Docker
 
 ## Variables de entorno
 
 | Nombre         | Para qué sirve                                                                                                                                      | Ejemplo                                                     |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `DATABASE_URL` | Dirección de conexión a PostgreSQL. **Obligatoria**: sin ella la app no arranca.                                                                    | `postgresql://usuario:contraseña@localhost:5432/biblioteca` |
+| `DATABASE_URL` | Dirección de conexión a PostgreSQL. **Obligatoria**: sin ella `python app.py` se niega a arrancar; con gunicorn la app arranca, pero responde 503.  | `postgresql://usuario:contraseña@localhost:5432/biblioteca` |
 | `SECRET_KEY`   | Clave para firmar los mensajes que se muestran al usuario. Si no se define, se usa una clave de desarrollo; en producción hay que poner una propia. | `una-clave-larga-y-secreta`                                 |
 
 En local se pueden definir en un fichero `.env` en la raíz del proyecto (copia `.env.example` y cambia los valores).
@@ -62,5 +63,16 @@ La aplicación escucha en el puerto **5000**.
 ## Base de datos
 
 La tabla `libros` se crea sola la primera vez que la app se conecta a la base de datos; no hay que ejecutar ningún script SQL.
+
+## Comprobar el estado
+
+La ruta `GET /health` indica si la app está viva y puede hablar con la base de datos (ejecuta un `SELECT 1`). En local: <http://localhost:5000/health>. Responde en JSON:
+
+| Código | Respuesta                                  | Significado                                                                                                                                                                |
+| ------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200    | `{"status": "ok", "db": "ok"}`             | Todo bien.                                                                                                                                                                 |
+| 503    | `{"status": "error", "db": "unreachable"}` | La app no puede usar la base de datos: no llega, las credenciales son incorrectas o no tiene permisos (también si falta `DATABASE_URL`). El motivo real queda en los logs. |
+
+No la usa una persona, sino un programa: más adelante la usaremos en el healthcheck de Docker y en la monitorización, para saber de forma automática si la app funciona.
 
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)

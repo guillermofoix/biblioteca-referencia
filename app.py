@@ -137,6 +137,22 @@ def borrar(id):
     return redirect(url_for("lista"))
 
 
+@app.route("/health")
+def health():
+    """Comprueba que la app está viva y llega a la base de datos (para Docker y la monitorización)."""
+    try:
+        with conectar() as conn:
+            conn.execute("SELECT 1")
+    except (psycopg.Error, RuntimeError) as error:
+        # Capturamos el error aquí y no en los errorhandlers de abajo, porque esos devuelven
+        # error.html y quien consulta un healthcheck es un programa que espera JSON.
+        # El detalle va solo al log: en la respuesta podría filtrar datos de conexión.
+        app.logger.error("Healthcheck fallido: %s", error)
+        return {"status": "error", "db": "unreachable"}, 503
+    # Flask convierte el diccionario en una respuesta JSON automáticamente
+    return {"status": "ok", "db": "ok"}, 200
+
+
 @app.context_processor
 def datos_comunes():
     """Variables disponibles en todas las plantillas (para el pie de página)."""
