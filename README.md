@@ -92,4 +92,55 @@ No la usa una persona, sino un programa: más adelante la usaremos en el healthc
 
 **Para revisar un PR de Dependabot**: comprueba que el CI está en verde, lee en la descripción del PR qué cambia en la nueva versión (sobre todo si es una versión mayor, que puede romper cosas) y comprueba en tu EC2 que la aplicación sigue funcionando antes de fusionarlo. Esto importa sobre todo en los cambios de versión mayor de Flask, psycopg o gunicorn.
 
+## Publicar una versión
+
+Cuando el código de `main` está listo para usarse, se publica una **versión**: una imagen Docker con un número fijo que queda guardada en el registro de contenedores de GitHub (GHCR). Lo hace el workflow `.github/workflows/release.yml`.
+
+### Números de versión (semver)
+
+Usamos **versionado semántico** (semver): `MAYOR.MENOR.PARCHE`, por ejemplo `1.4.2`. Cada número dice qué tipo de cambio trae la versión:
+
+| Número     | Cuándo se sube                                                                       | Ejemplo en esta app                                                                   |
+| ---------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| **PARCHE** | Se arregla un fallo sin cambiar cómo se usa la app.                                  | La búsqueda no encontraba autores con tilde y ahora sí: `1.4.2` → `1.4.3`.            |
+| **MENOR**  | Se añade algo nuevo y todo lo anterior sigue funcionando igual.                      | Se añade un campo opcional "editorial" a los libros: `1.4.3` → `1.5.0`.               |
+| **MAYOR**  | Hay un cambio que rompe lo anterior: quien la despliegue tiene que cambiar algo.     | Se cambia `DATABASE_URL` por variables separadas (`DB_HOST`, `DB_USER`...): `1.5.0` → `2.0.0`. |
+
+Al subir un número, los de su derecha vuelven a 0. La etiqueta en Git lleva una `v` delante (`v1.4.3`); la imagen, no (`1.4.3`). Si la etiqueta no tiene el formato `vX.Y.Z`, el workflow falla con un mensaje de error y no publica nada.
+
+### Crear una release en GitHub
+
+1. Asegúrate de que el CI de `main` está en verde.
+2. En el repositorio, ve a **Releases** (columna derecha) → **Draft a new release**.
+3. En **Choose a tag**, escribe la etiqueta nueva (por ejemplo, `v1.0.0`) y pulsa **Create new tag: v1.0.0 on publish**. Comprueba que el destino (**Target**) es `main`.
+4. Pulsa **Generate release notes**: GitHub escribe la lista de cambios a partir de los PR fusionados desde la versión anterior. Puedes retocarla.
+5. Pulsa **Publish release**.
+
+### Qué hace el workflow
+
+Al publicar la release, en la pestaña **Actions** aparece una ejecución del workflow **Release**, que:
+
+1. Comprueba que la etiqueta tiene el formato `vX.Y.Z` y calcula el nombre de la imagen: `ghcr.io/usuario/repositorio`, siempre en minúsculas (GHCR no admite mayúsculas).
+2. Construye la imagen con dos etiquetas: la versión (`:1.0.0`) y `:latest`.
+3. La escanea con Trivy, igual que el CI. **Si encuentra vulnerabilidades graves, se para y no publica nada.**
+4. Inicia sesión en GHCR con el token temporal que GitHub crea para cada ejecución (no hay que configurar ningún secreto) y sube las dos etiquetas.
+5. Escribe un resumen en la página de la ejecución con el nombre de la imagen y el comando `docker pull`.
+
+La imagen se ve en la pestaña **Packages** de tu perfil de GitHub y en la columna derecha del repositorio (sección **Packages**).
+
+### Visibilidad del paquete: privado o público
+
+La primera vez que se publica, el paquete se crea **privado**. Para cambiarlo: abre el paquete → **Package settings** → **Danger Zone** → **Change visibility**.
+
+- **Privado**: solo quien tenga permiso puede descargarlo. Para hacer `docker pull` desde la EC2, antes hay que ejecutar `docker login ghcr.io` con tu usuario y un **token personal** (Settings → Developer settings → Personal access tokens) con el permiso `read:packages`. Ese token se queda guardado en la EC2, así que hay que tratarlo como una contraseña.
+- **Público**: cualquiera puede descargarlo sin iniciar sesión, así que en la EC2 basta con `docker pull`. Es lo más cómodo para este proyecto, pero solo si la imagen no contiene nada secreto (Trivy también lo comprueba, y los secretos van en variables de entorno, nunca dentro de la imagen).
+
+### ¿`:latest` o una versión concreta?
+
+`:latest` es cómodo para probar (`docker pull ghcr.io/usuario/repositorio:latest` siempre trae la última), pero **en producción se despliega una versión concreta**, por ejemplo `:1.4.3`:
+
+- Sabes exactamente qué código está funcionando en el servidor.
+- `:latest` cambia cada vez que se publica, así que dos servidores (o el mismo servidor en dos días distintos) podrían estar ejecutando versiones diferentes sin que nadie se dé cuenta.
+- Si la versión nueva falla, **volver atrás** es tan sencillo como arrancar otra vez la anterior (`:1.4.2`), que sigue guardada en GHCR. Con `:latest` no sabrías a qué versión volver.
+
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)
