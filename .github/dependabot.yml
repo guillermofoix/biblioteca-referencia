@@ -1,0 +1,44 @@
+# Dependabot: robot de GitHub que revisa si hay versiones nuevas de nuestras dependencias
+# y abre un pull request para actualizarlas. Ese PR pasa por el CI como cualquier otro.
+version: 2
+
+updates:
+  # Paquetes de Python. En el directorio "/" encuentra requirements.txt y requirements-dev.txt.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    # Como mucho 5 PR abiertos a la vez, para no llenar el repo de PR pendientes.
+    open-pull-requests-limit: 5
+    # Mensaje de commit: "chore(deps): ...", igual que nuestros conventional commits.
+    commit-message:
+      prefix: "chore(deps)"
+    # Las versiones menores y de parche (3.0.3 -> 3.0.4 o 3.1.0) se juntan en un único PR.
+    # Las versiones mayores (3.x -> 4.0) siguen llegando por separado: pueden romper cosas.
+    groups:
+      pip-menores-y-parches:
+        update-types:
+          - minor
+          - patch
+
+  # Imagen base del Dockerfile (python:3.12-slim): avisa cuando sale una versión nueva.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Acciones de los workflows (actions/checkout, trivy-action...). Si una acción está
+  # fijada por SHA, Dependabot actualiza el SHA y también el comentario con la versión.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
