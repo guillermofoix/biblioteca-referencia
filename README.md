@@ -1,5 +1,7 @@
 # Biblioteca del aula
 
+[![CI](https://github.com/guillermofoix/biblioteca-referencia/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guillermofoix/biblioteca-referencia/actions/workflows/ci.yml)
+
 Aplicación web sencilla para gestionar los libros de un aula: listar, buscar por título o autor, añadir, editar y borrar libros. Está hecha con Flask y guarda los datos en PostgreSQL.
 
 ## Requisitos
