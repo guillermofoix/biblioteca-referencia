@@ -61,3 +61,27 @@ jobs:
       # NO se publica en ningún registro: eso lo haremos en un paso posterior del pipeline.
       - name: Construir la imagen Docker
         run: docker build -t biblioteca:${{ github.sha }} .
+
+      # Trivy busca vulnerabilidades conocidas (CVE) en la imagen recién construida:
+      # en los paquetes del sistema de la imagen base y en las librerías de Python.
+      # La acción se fija por el SHA completo de un commit y no por una etiqueta (v0.36.0),
+      # porque una etiqueta se puede mover a otro commit: si alguien compromete el repositorio
+      # de la acción, podría apuntarla a código malicioso y nuestro CI lo ejecutaría sin saberlo
+      # (ataque a la cadena de suministro). Un SHA siempre señala el mismo código.
+      - name: Escanear la imagen con Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          # Imagen que se escanea: la que acabamos de construir en el paso anterior.
+          image-ref: biblioteca:${{ github.sha }}
+          # Solo nos importan los fallos graves; los de gravedad media o baja no paran el CI.
+          severity: CRITICAL,HIGH
+          # Ignora los fallos que todavía NO tienen arreglo publicado: no podríamos hacer nada
+          # para resolverlos, y bloquear el CI por ellos solo impediría trabajar.
+          ignore-unfixed: true
+          # Si encuentra algún fallo (de los que quedan tras los filtros), termina con código 1
+          # y el job "build" se pone en rojo.
+          exit-code: "1"
+          # Resultado como tabla legible en el log del job.
+          format: table
+          # Lista de CVE que hemos decidido ignorar, cada uno con su motivo.
+          trivyignores: .trivyignore
