@@ -18,3 +18,10 @@ docker-compose*.yml
 # Documentación: no forma parte de la aplicación.
 docs/
 README.md
+
+# Ficheros de desarrollo y CI: no hacen falta para ejecutar la app.
+tests/
+requirements-dev.txt
+pyproject.toml
+.github/
+.pytest_cache/
