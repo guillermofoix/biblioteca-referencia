@@ -160,6 +160,8 @@ La EC2 no construye la imagen: descarga de GHCR la que publicó el workflow de r
    cp .env.example .env
    nano .env
    ```
+   La contraseña de RDS no debe contener `@ : / # ? %`, porque rompen la URL de `DATABASE_URL`, ni `$`, porque Docker Compose lo interpretaría como el comienzo de una variable. Si tiene alguno, cámbiala.
+
    Si el paquete de GHCR es privado, antes tienes que hacer `docker login ghcr.io` (ver [Visibilidad del paquete](#visibilidad-del-paquete-privado-o-público)).
 4. **Descarga la imagen**:
    ```bash
@@ -223,7 +225,7 @@ Un **environment** es un "entorno de destino" con sus propias reglas y secrets. 
 
 1. **Settings** → **Environments** → **New environment**, con el nombre `produccion`.
 2. En **Deployment protection rules**, marca **Required reviewers** y añade quién puede aprobar despliegues (por ejemplo, tú). Guarda.
-3. En **Environment secrets**, añade `DATABASE_URL` (la conexión a RDS) y `SECRET_KEY`. Solo los jobs que declaran `environment: produccion` pueden leerlos.
+3. En **Environment secrets**, añade `DATABASE_URL` (la conexión a RDS) y `SECRET_KEY`. Solo los jobs que declaran `environment: produccion` pueden leerlos. Recuerda que la contraseña de `DATABASE_URL` no puede llevar `@ : / # ? %` ni `$` (el workflow la escribe tal cual en el `.env`).
 
 ### Aprobar un despliegue
 
@@ -234,6 +236,8 @@ El job comprueba que el contenedor llega a `healthy` (gracias al healthcheck y a
 ### Volver atrás a mano (rollback)
 
 **Actions** → **Deploy** (columna izquierda) → **Run workflow** → escribe la versión anterior **sin la v** (por ejemplo, `1.0.0`) → **Run workflow**. También pide aprobación. Solo se puede volver a versiones que tienen release: el workflow descarga el `docker-compose.yml` de la etiqueta `vX.Y.Z`.
+
+> **La primera versión desplegable es la 1.1.0.** Las versiones anteriores (como la `1.0.0`) no se pueden desplegar con el workflow, porque su `docker-compose.yml` todavía construía la imagen (`build: .`) en vez de usar la de GHCR.
 
 ### Rollback automático
 
