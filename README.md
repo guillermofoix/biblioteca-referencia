@@ -63,4 +63,15 @@ La aplicación escucha en el puerto **5000**.
 
 La tabla `libros` se crea sola la primera vez que la app se conecta a la base de datos; no hay que ejecutar ningún script SQL.
 
+## Comprobar el estado
+
+La ruta `GET /health` indica si la app está viva y puede hablar con la base de datos (ejecuta un `SELECT 1`). Responde en JSON:
+
+| Código | Respuesta                                  | Significado                                                       |
+| ------ | ------------------------------------------ | ----------------------------------------------------------------- |
+| 200    | `{"status": "ok", "db": "ok"}`             | Todo bien.                                                        |
+| 503    | `{"status": "error", "db": "unreachable"}` | No se llega a la base de datos (o falta `DATABASE_URL`). El motivo real queda en los logs. |
+
+No la usa una persona, sino un programa: más adelante la usaremos en el healthcheck de Docker y en la monitorización, para saber de forma automática si la app funciona.
+
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)
