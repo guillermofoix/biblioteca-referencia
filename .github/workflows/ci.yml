@@ -22,7 +22,7 @@ jobs:
     steps:
       # Descarga el código del repositorio en la máquina virtual.
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Instala Python 3.12, la misma versión que usa la imagen Docker.
       # cache: pip guarda los paquetes descargados para que las siguientes ejecuciones vayan más rápido.
@@ -54,7 +54,7 @@ jobs:
     steps:
       # Cada job empieza en una máquina limpia, así que hay que volver a descargar el código.
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Construye la imagen con el Dockerfile del repositorio para comprobar que no está roto.
       # La etiqueta usa el identificador del commit (github.sha) para saber de qué versión es.
