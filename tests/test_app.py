@@ -70,3 +70,27 @@ def test_lista_sin_base_de_datos_devuelve_503(cliente, monkeypatch):
     assert respuesta.status_code == 503
     # Y debe hacerlo rápido: muy por debajo de los 30 s en que gunicorn corta la petición
     assert duracion < 10
+
+
+# ---------- Tests de la ruta /health ----------
+# El caso correcto (200 con {"status": "ok", "db": "ok"}) necesita una base de datos real,
+# así que no se prueba aquí: simularla con mocks complicaría el test sin aportar mucho.
+
+def test_health_sin_base_de_datos_devuelve_503(cliente, monkeypatch):
+    # Mismo truco que en el test de la lista: un puerto cerrado rechaza la conexión al instante
+    monkeypatch.setattr(modulo_app, "DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
+    inicio = time.monotonic()
+    respuesta = cliente.get("/health")
+    duracion = time.monotonic() - inicio
+    assert respuesta.status_code == 503
+    # Debe responder JSON (no la página error.html) y sin detalles de la conexión
+    assert respuesta.get_json() == {"status": "error", "db": "unreachable"}
+    assert duracion < 10
+
+
+def test_health_sin_database_url_devuelve_503(cliente, monkeypatch):
+    # Sin DATABASE_URL, conectar() lanza RuntimeError: /health también debe responder JSON
+    monkeypatch.setattr(modulo_app, "DATABASE_URL", None)
+    respuesta = cliente.get("/health")
+    assert respuesta.status_code == 503
+    assert respuesta.get_json() == {"status": "error", "db": "unreachable"}
