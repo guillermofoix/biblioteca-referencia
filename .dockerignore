@@ -25,3 +25,4 @@ requirements-dev.txt
 pyproject.toml
 .github/
 .pytest_cache/
+.trivyignore

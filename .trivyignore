@@ -1,0 +1,13 @@
+# CVE que Trivy debe ignorar al escanear la imagen (lo usa el CI, no la app).
+#
+# Ignorar un CVE es una excepción, no la forma normal de poner el CI en verde. Lo primero
+# es actualizar la dependencia o la imagen base. Solo se añade aquí cuando eso no es posible
+# (por ejemplo, el fallo está en una parte de la librería que la app no usa) y SIEMPRE con:
+#   - el identificador del CVE, solo en su propia línea;
+#   - encima, un comentario con el motivo, quién lo decide y cuándo revisarlo.
+#
+# Ejemplo (no es un CVE real del proyecto):
+#   # Afecta a un formato de fichero que la app nunca procesa. Revisar al actualizar la imagen base.
+#   CVE-2099-12345
+#
+# Ignorar un CVE sin justificarlo NO está permitido: el PR se rechaza.
