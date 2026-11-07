@@ -1,0 +1,5 @@
+# Dependencias SOLO para desarrollo y CI (tests y revisión de estilo).
+# No van en requirements.txt para que no acaben dentro de la imagen Docker.
+# Instalación: pip install -r requirements.txt -r requirements-dev.txt
+pytest==9.2.0
+ruff==0.17.4

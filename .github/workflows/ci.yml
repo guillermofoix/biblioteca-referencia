@@ -1,0 +1,63 @@
+# Integración continua (CI): cada cambio se comprueba automáticamente en GitHub.
+# Nombre que aparece en la pestaña "Actions" y en la insignia del README.
+name: CI
+
+# Cuándo se ejecuta:
+# - en cada pull request, para saber si el cambio es seguro ANTES de fusionarlo;
+# - en cada push a main, para confirmar que la rama principal sigue funcionando.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Permisos mínimos: este workflow solo necesita leer el código del repositorio.
+permissions:
+  contents: read
+
+jobs:
+  # ---------- Job 1: revisión de estilo y tests ----------
+  tests:
+    # Máquina virtual Linux que nos presta GitHub para ejecutar los pasos.
+    runs-on: ubuntu-latest
+    steps:
+      # Descarga el código del repositorio en la máquina virtual.
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      # Instala Python 3.12, la misma versión que usa la imagen Docker.
+      # cache: pip guarda los paquetes descargados para que las siguientes ejecuciones vayan más rápido.
+      - name: Instalar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Dependencias de la app (requirements.txt) y de desarrollo: pytest y ruff (requirements-dev.txt).
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      # ruff revisa el estilo y errores típicos (variables sin usar, imports desordenados...).
+      # Va antes que los tests porque es más rápido: si falla, nos enteramos antes.
+      - name: Revisar el estilo con ruff
+        run: ruff check .
+
+      # Ejecuta los tests de la carpeta tests/. No necesitan base de datos real.
+      - name: Ejecutar los tests con pytest
+        run: pytest -v
+
+  # ---------- Job 2: construir la imagen Docker ----------
+  build:
+    # needs: solo se ejecuta si el job "tests" ha terminado bien.
+    # No tiene sentido construir una imagen de un código que no pasa los tests.
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      # Cada job empieza en una máquina limpia, así que hay que volver a descargar el código.
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      # Construye la imagen con el Dockerfile del repositorio para comprobar que no está roto.
+      # La etiqueta usa el identificador del commit (github.sha) para saber de qué versión es.
+      # NO se publica en ningún registro: eso lo haremos en un paso posterior del pipeline.
+      - name: Construir la imagen Docker
+        run: docker build -t biblioteca:${{ github.sha }} .

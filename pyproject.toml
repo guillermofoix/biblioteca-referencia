@@ -1,0 +1,19 @@
+# Configuración de las herramientas de desarrollo (la app no usa este fichero).
+
+[tool.ruff]
+# Versión de Python para la que revisamos el código (la misma que la imagen Docker).
+target-version = "py312"
+# Longitud máxima de línea. Algunas consultas SQL de app.py son largas;
+# con 120 caracteres caben sin tener que partirlas.
+line-length = 120
+
+[tool.ruff.lint]
+# Reglas activadas: E y F (errores de estilo y fallos típicos, las de por defecto),
+# I (orden de los import).
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+# Carpeta donde pytest busca los tests.
+testpaths = ["tests"]
+# Añade la raíz del proyecto al path para que los tests puedan hacer "import app".
+pythonpath = ["."]
