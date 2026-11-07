@@ -126,6 +126,8 @@ Al publicar la release, en la pestaña **Actions** aparece una ejecución del wo
 4. Inicia sesión en GHCR con el token temporal que GitHub crea para cada ejecución (no hay que configurar ningún secreto) y sube las dos etiquetas.
 5. Escribe un resumen en la página de la ejecución con el nombre de la imagen y el comando `docker pull`.
 
+> **Aviso: la primera publicación puede fallar con `denied`.** La primera vez, el `docker push` puede terminar con un error `denied` en el último paso aunque las capas se hayan subido. No pasa nada: el paquete ya queda creado y vinculado al repositorio. Entra en la ejecución fallida en **Actions** y pulsa **Re-run failed jobs**; la segunda vez funciona.
+
 La imagen se ve en la pestaña **Packages** de tu perfil de GitHub y en la columna derecha del repositorio (sección **Packages**).
 
 ### Visibilidad del paquete: privado o público
@@ -142,5 +144,57 @@ La primera vez que se publica, el paquete se crea **privado**. Para cambiarlo: a
 - Sabes exactamente qué código está funcionando en el servidor.
 - `:latest` cambia cada vez que se publica, así que dos servidores (o el mismo servidor en dos días distintos) podrían estar ejecutando versiones diferentes sin que nadie se dé cuenta.
 - Si la versión nueva falla, **volver atrás** es tan sencillo como arrancar otra vez la anterior (`:1.4.2`), que sigue guardada en GHCR. Con `:latest` no sabrías a qué versión volver.
+
+## Desplegar en la EC2
+
+La EC2 no construye la imagen: descarga de GHCR la que publicó el workflow de release, que ya ha pasado los tests y el escaneo de Trivy. Así, lo que se ejecuta en la EC2 es exactamente lo que se probó.
+
+1. **Ten Docker instalado** en la EC2, con el plugin de Compose (`docker compose version` debe responder).
+2. **Consigue el `docker-compose.yml`** clonando el repositorio (solo hace falta ese fichero y `.env.example`, pero clonar es lo más sencillo):
+   ```bash
+   git clone https://github.com/guillermofoix/biblioteca-referencia.git
+   cd biblioteca-referencia
+   ```
+3. **Crea el `.env`** a partir del ejemplo y rellena `DATABASE_URL`, `SECRET_KEY`, `IMAGEN` y `VERSION`:
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+   Si el paquete de GHCR es privado, antes tienes que hacer `docker login ghcr.io` (ver [Visibilidad del paquete](#visibilidad-del-paquete-privado-o-público)).
+4. **Descarga la imagen**:
+   ```bash
+   docker compose pull
+   ```
+5. **Arranca el contenedor** en segundo plano:
+   ```bash
+   docker compose up -d
+   ```
+6. **Comprueba que está sano**:
+   ```bash
+   docker compose ps
+   ```
+   Al principio la columna STATUS pone `(health: starting)`. Espera unos 30 segundos y repite hasta que ponga `(healthy)`. Si pone `(unhealthy)`, la app no puede usar la base de datos: mira `docker compose logs app`. Docker **no** reinicia el contenedor por estar unhealthy; solo lo marca.
+
+### Cambiar de versión o volver atrás
+
+Edita `VERSION` en el `.env` (por ejemplo, de `1.0.0` a `1.1.0`, o de vuelta a `1.0.0` si la nueva falla) y repite:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+Compose ve que la imagen ha cambiado y sustituye el contenedor por uno nuevo con la otra versión. La base de datos no se toca: está en RDS.
+
+### Probar cambios antes de publicar una release
+
+Si quieres probar en la EC2 un cambio que aún no está en ninguna release, construye la imagen a mano con la etiqueta `dev` (usa el mismo valor de `IMAGEN` que tienes en `.env`):
+
+```bash
+docker build -t ghcr.io/guillermofoix/biblioteca-referencia:dev .
+```
+
+Pon `VERSION=dev` en el `.env` y arranca con `docker compose up -d` (**sin** `pull`: esa imagen solo existe en la EC2, no en GHCR). Cuando termines, vuelve a poner una versión publicada.
 
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)
