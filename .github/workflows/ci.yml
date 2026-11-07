@@ -27,7 +27,7 @@ jobs:
       # Instala Python 3.12, la misma versión que usa la imagen Docker.
       # cache: pip guarda los paquetes descargados para que las siguientes ejecuciones vayan más rápido.
       - name: Instalar Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
