@@ -1,0 +1,195 @@
+# Despliegue (entrega continua): pone en marcha en la EC2 una versión ya publicada en GHCR.
+#
+# Es un workflow REUTILIZABLE: otros workflows lo pueden llamar como si fuera un job más
+# (con "uses: ./.github/workflows/deploy.yml"). Así los pasos del despliegue están escritos
+# UNA sola vez y sirven para dos casos:
+#   - release.yml lo llama justo después de publicar la imagen (despliegue automático).
+#   - Lo lanzamos a mano desde Actions > Deploy > Run workflow (desplegar o volver atrás).
+# Si copiáramos los pasos en los dos sitios, tarde o temprano uno se quedaría desactualizado.
+name: Deploy
+
+on:
+  # Cuando lo llama otro workflow (release.yml), que le pasa la versión.
+  workflow_call:
+    inputs:
+      version:
+        description: "Versión a desplegar sin la v, p. ej. 1.0.0"
+        type: string
+        required: true
+  # Cuando lo lanzamos a mano desde la pestaña Actions: GitHub muestra un formulario
+  # con este campo. Sirve también para hacer rollback a una versión anterior.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión a desplegar sin la v, p. ej. 1.0.0"
+        type: string
+        required: true
+
+# Solo hace falta leer el código (para descargar el docker-compose.yml).
+# La imagen es pública, así que no se necesita permiso de packages para hacer pull.
+permissions:
+  contents: read
+
+jobs:
+  desplegar:
+    # Se ejecuta en NUESTRA EC2 (self-hosted runner), no en una máquina de GitHub.
+    # Las dos etiquetas tienen que coincidir con las del runner instalado en la EC2.
+    runs-on: [self-hosted, produccion]
+
+    # El environment "produccion" (Settings > Environments) hace dos cosas:
+    #   - Exige que una persona APRUEBE el despliegue antes de que empiece este job.
+    #   - Guarda los secrets DATABASE_URL y SECRET_KEY, que solo están disponibles
+    #     para los jobs que declaran este environment.
+    environment: produccion
+
+    # Nunca dos despliegues a la vez: si llega otro mientras uno está en marcha, espera
+    # en cola. cancel-in-progress: false hace que NO se cancele el que está en curso:
+    # cortar un despliegue a medias podría dejar la app parada o con un .env a medio escribir.
+    # (Si llegan varios mientras tanto, solo se queda en cola el último.)
+    concurrency:
+      group: despliegue-produccion
+      cancel-in-progress: false
+
+    # Carpeta FIJA de la EC2 donde vive el despliegue (docker-compose.yml y .env).
+    # No usamos la carpeta de trabajo del runner (_work/...) porque actions/checkout la
+    # limpia en cada ejecución: ahí perderíamos el .env y no sabríamos qué versión había antes.
+    env:
+      DIR_DESPLIEGUE: /home/ubuntu/despliegue-biblioteca
+
+    # bash con "-e" y "pipefail": si cualquier comando falla, el paso se para con error.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # Descarga el código de la ETIQUETA de esa versión (v1.0.0...), no el de main:
+      # así usamos el docker-compose.yml que corresponde a la versión que se despliega.
+      # Si la etiqueta no existe (versión que nunca se publicó), este paso falla y no se toca nada.
+      - name: Descargar el código de la versión
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      # La versión llega por env: y no escrita con ${{ }} dentro del script: así se trata
+      # como texto y nunca como código bash, aunque alguien escriba algo raro en el formulario.
+      - name: Validar la versión
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::La versión '$VERSION' no tiene el formato X.Y.Z (por ejemplo, 1.0.0, sin la v)."
+            exit 1
+          fi
+
+      # Prepara la carpeta de despliegue: guarda la versión que había antes (para el rollback),
+      # copia el docker-compose.yml y escribe un .env nuevo con los datos de esta versión.
+      - name: Preparar la carpeta de despliegue
+        id: preparar
+        env:
+          REPOSITORIO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          # Los secrets se pasan como variables de entorno. NUNCA se hace echo de ellos:
+          # GitHub intenta ocultarlos en el log, pero lo seguro es no imprimirlos jamás.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          # Comprobamos los secrets ANTES de tocar nada, para no dejar un .env roto.
+          if [ -z "$DATABASE_URL" ] || [ -z "$SECRET_KEY" ]; then
+            echo "::error::Faltan los secrets DATABASE_URL o SECRET_KEY en el environment produccion."
+            exit 1
+          fi
+
+          mkdir -p "$DIR_DESPLIEGUE"
+
+          # Versión que estaba desplegada (si hay un .env de antes). "|| true" evita que el paso
+          # falle cuando grep no encuentra nada (primer despliegue).
+          ANTERIOR=""
+          if [ -f "$DIR_DESPLIEGUE/.env" ]; then
+            ANTERIOR=$(grep '^VERSION=' "$DIR_DESPLIEGUE/.env" | cut -d= -f2- || true)
+          fi
+          echo "anterior=$ANTERIOR" >> "$GITHUB_OUTPUT"
+          echo "Versión anterior: ${ANTERIOR:-ninguna (primer despliegue)}"
+
+          cp docker-compose.yml "$DIR_DESPLIEGUE/docker-compose.yml"
+
+          # umask 077: los ficheros nuevos se crean con permisos 600 (solo el usuario ubuntu
+          # puede leerlos), porque el .env contiene la contraseña de la base de datos.
+          # Borramos antes el .env viejo: umask solo afecta a ficheros NUEVOS.
+          umask 077
+          rm -f "$DIR_DESPLIEGUE/.env"
+          # printf escribe los valores en el fichero sin mostrarlos en pantalla.
+          # ${REPOSITORIO,,} lo pasa a minúsculas, porque GHCR no admite mayúsculas.
+          printf 'IMAGEN=%s\nVERSION=%s\nDATABASE_URL=%s\nSECRET_KEY=%s\n' \
+            "ghcr.io/${REPOSITORIO,,}" "$VERSION" "$DATABASE_URL" "$SECRET_KEY" \
+            > "$DIR_DESPLIEGUE/.env"
+
+      # Descarga la imagen nueva y arranca el contenedor con ella.
+      # -p biblioteca: nombre de proyecto FIJO. Por defecto Compose usa el nombre de la carpeta;
+      #   fijándolo, siempre gestiona el mismo contenedor aunque cambiemos de carpeta.
+      # --wait: espera a que el contenedor esté "healthy" (gracias al healthcheck del compose)
+      #   y, si no lo consigue en 120 s (--wait-timeout), termina con error. Sin --wait,
+      #   "up -d" daría el despliegue por bueno nada más arrancar, aunque la app no funcionara.
+      - name: Desplegar
+        id: desplegar
+        run: |
+          cd "$DIR_DESPLIEGUE"
+          docker compose -p biblioteca pull
+          docker compose -p biblioteca up -d --wait --wait-timeout 120
+
+      # Rollback automático: solo si ha fallado el paso "Desplegar".
+      # Vuelve a la versión anterior, cuya imagen sigue en la EC2 (prune no borra imágenes
+      # con etiqueta). El job termina en rojo SIEMPRE: aunque la app vuelva a funcionar,
+      # la versión nueva no se ha desplegado y hay que enterarse.
+      - name: Volver a la versión anterior (rollback)
+        if: failure() && steps.desplegar.outcome == 'failure'
+        env:
+          VERSION: ${{ inputs.version }}
+          ANTERIOR: ${{ steps.preparar.outputs.anterior }}
+        run: |
+          cd "$DIR_DESPLIEGUE"
+
+          # Últimas líneas del log de la versión que ha fallado, para saber por qué.
+          echo "Logs de la versión $VERSION:"
+          docker compose -p biblioteca logs --tail 50 app || true
+
+          # Sin versión anterior (primer despliegue) no hay a dónde volver.
+          # La versión anterior viene de un fichero, así que también la validamos.
+          if [ -z "$ANTERIOR" ] || [ "$ANTERIOR" = "$VERSION" ] || [[ ! "$ANTERIOR" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::El despliegue de la versión $VERSION ha fallado y no hay una versión anterior a la que volver. Revisa los logs."
+            exit 1
+          fi
+
+          # Cambia solo la línea VERSION del .env y vuelve a arrancar con la anterior.
+          sed -i "s/^VERSION=.*/VERSION=$ANTERIOR/" .env
+          if docker compose -p biblioteca up -d --wait --wait-timeout 120; then
+            echo "::error::El despliegue de la versión $VERSION ha fallado. Se ha vuelto a la versión $ANTERIOR."
+          else
+            echo "::error::El despliegue de la versión $VERSION ha fallado y la vuelta a la versión $ANTERIOR TAMBIÉN. Revisa la EC2."
+          fi
+          exit 1
+
+      # Solo si todo ha ido bien: borra las imágenes "colgantes" (dangling), las que se han
+      # quedado SIN etiqueta. Las versiones anteriores conservan su etiqueta (:1.0.0...),
+      # así que no se borran y siguen disponibles para un rollback rápido.
+      - name: Limpiar imágenes sin etiqueta
+        run: docker image prune -f
+
+      # Resumen en la página de la ejecución (pestaña Actions).
+      - name: Resumen del despliegue
+        env:
+          VERSION: ${{ inputs.version }}
+          ANTERIOR: ${{ steps.preparar.outputs.anterior }}
+        run: |
+          cd "$DIR_DESPLIEGUE"
+          {
+            echo "## Despliegue completado"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Versión desplegada | $VERSION |"
+            echo "| Versión anterior | ${ANTERIOR:-ninguna (primer despliegue)} |"
+            echo ""
+            echo "\`\`\`"
+            docker compose -p biblioteca ps
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

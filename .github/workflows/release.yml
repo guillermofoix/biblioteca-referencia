@@ -21,6 +21,11 @@ permissions:
 jobs:
   publicar:
     runs-on: ubuntu-latest
+    # Salida del JOB: la versión calculada en el paso "variables". Así el job "desplegar"
+    # puede leerla con needs.publicar.outputs.version (los pasos de un job no se ven
+    # desde otro job; solo sus outputs).
+    outputs:
+      version: ${{ steps.variables.outputs.version }}
     steps:
       # Descarga el código en la versión de la etiqueta de la release.
       # Misma versión de la acción que en ci.yml.
@@ -123,3 +128,19 @@ jobs:
             echo "docker pull ${{ steps.variables.outputs.imagen }}:${{ steps.variables.outputs.version }}"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Cadena completa: publicar -> (aprobación en el environment produccion) -> desplegar.
+  # Este job no tiene pasos propios: llama al workflow reutilizable deploy.yml, el mismo que
+  # se usa para desplegar a mano. Antes de empezar, GitHub pide la aprobación de un revisor
+  # del environment "produccion".
+  desplegar:
+    # Solo si "publicar" ha terminado bien: si Trivy o el push fallan, no se despliega nada.
+    needs: publicar
+    uses: ./.github/workflows/deploy.yml
+    # Desplegar no sube imágenes: basta con leer el código.
+    permissions:
+      contents: read
+    with:
+      version: ${{ needs.publicar.outputs.version }}
+    # Pasa los secrets al workflow llamado (sin esto, deploy.yml no los vería).
+    secrets: inherit
