@@ -12,12 +12,19 @@
 #
 # Uso (en la EC2, dentro de esta carpeta):
 #   cp .env.example .env      # y edita .env con tus valores reales
-#   docker compose up -d --build
+#   docker compose pull       # descarga la imagen de GHCR
+#   docker compose up -d
+#   docker compose ps         # espera a que ponga "healthy"
 services:
 
   app:
-    # Construye la imagen con el Dockerfile de esta carpeta.
-    build: .
+    # La EC2 ya NO construye la imagen (antes había "build: ."): descarga la que publicó
+    # el workflow de release en GHCR. Ventajas:
+    #   - Es una imagen que ya ha pasado los tests y el escaneo de Trivy en GitHub.
+    #   - Es exactamente la misma en todas partes: lo que se probó es lo que se ejecuta.
+    #   - Volver atrás es cambiar VERSION en .env y repetir "pull" y "up -d".
+    # IMAGEN y VERSION se leen del fichero .env; ${VAR:?mensaje} hace que sean obligatorias.
+    image: ${IMAGEN:?Define IMAGEN en .env (por ejemplo, ghcr.io/usuario/biblioteca-referencia)}:${VERSION:?Define VERSION en .env (por ejemplo, 1.0.0, sin la "v")}
     # Si el contenedor falla o se reinicia la EC2, vuelve a arrancar solo
     # (salvo que lo pares tú con "docker compose down").
     restart: unless-stopped
@@ -34,3 +41,32 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL (conexión a RDS) en .env}
       SECRET_KEY: ${SECRET_KEY:?Define SECRET_KEY en .env}
+    # Healthcheck: Docker ejecuta este comando DENTRO del contenedor cada cierto tiempo
+    # para saber si la app funciona de verdad (no solo si el proceso está en marcha).
+    #   - Si el comando termina bien (código 0), el contenedor está "healthy" (sano).
+    #   - Si falla "retries" veces seguidas, pasa a "unhealthy" (enfermo).
+    # Lo vemos en la columna STATUS de "docker compose ps".
+    #
+    # La imagen slim no trae curl, así que usamos Python, que sí está. urlopen pide /health:
+    # si la app responde 200, todo bien; si responde 503 (no llega a la base de datos) o
+    # no responde, urlopen lanza una excepción, Python termina con error y el intento falla.
+    #
+    # timeout=8 en urlopen es mayor que el connect_timeout de 5 s que usa la app con la base
+    # de datos: así, si RDS no responde, le damos tiempo a la app a rendirse y contestar 503
+    # (un fallo claro de base de datos) en lugar de cortar antes sin saber qué pasaba.
+    # Y el timeout de 10 s de Docker es mayor que los 8 s de urlopen, por el mismo motivo.
+    #
+    # OJO: Docker Compose NO reinicia un contenedor unhealthy; solo lo marca. "restart" solo
+    # actúa si el proceso termina. Usaremos este estado para comprobar que un despliegue
+    # ha ido bien.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=8)"]
+      # Cada cuánto se comprueba.
+      interval: 30s
+      # Si el comando tarda más que esto, cuenta como fallo.
+      timeout: 10s
+      # Fallos seguidos necesarios para pasar a "unhealthy".
+      retries: 3
+      # Margen al arrancar: los fallos durante los primeros 15 s no cuentan,
+      # para dar tiempo a gunicorn a ponerse en marcha.
+      start_period: 15s
