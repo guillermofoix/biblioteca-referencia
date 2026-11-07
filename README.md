@@ -75,4 +75,17 @@ La ruta `GET /health` indica si la app está viva y puede hablar con la base de 
 
 No la usa una persona, sino un programa: más adelante la usaremos en el healthcheck de Docker y en la monitorización, para saber de forma automática si la app funciona.
 
+## Seguridad automática
+
+- **Trivy** (en el job `build` del CI): escanea la imagen Docker recién construida en busca de vulnerabilidades conocidas (CVE), tanto en la imagen base como en las librerías de Python. Si encuentra alguna de gravedad alta o crítica que ya tenga arreglo, el CI se pone en rojo.
+- **Dependabot** (`.github/dependabot.yml`): cada lunes comprueba si hay versiones nuevas de las dependencias de Python, de la imagen base y de las acciones de GitHub, y abre un PR para actualizarlas.
+
+**Si Trivy pone el CI en rojo**, mira en el log del job qué paquete tiene el fallo y en qué versión está arreglado:
+
+1. Si es una librería de Python, sube su versión en `requirements.txt`.
+2. Si es un paquete del sistema, actualiza la imagen base del `Dockerfile` (o espera al PR de Dependabot).
+3. Solo si no se puede arreglar, añade el CVE a `.trivyignore` con un comentario que justifique el motivo. Ignorar un CVE sin justificarlo no está permitido.
+
+**Para revisar un PR de Dependabot**: comprueba que el CI está en verde, lee en la descripción del PR qué cambia en la nueva versión (sobre todo si es una versión mayor, que puede romper cosas) y, si afecta a la app, pruébala en local antes de fusionarlo.
+
 Reto de despliegue: ver [docs/RETO_DESPLIEGUE.md](docs/RETO_DESPLIEGUE.md)
