@@ -1,5 +1,5 @@
 # Imagen base: Linux mínimo con Python 3.12 ya instalado.
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # PYTHONDONTWRITEBYTECODE=1: Python no crea ficheros .pyc (no hacen falta en un contenedor).
 # PYTHONUNBUFFERED=1: los print y logs salen al momento, así se ven en "docker compose logs".
